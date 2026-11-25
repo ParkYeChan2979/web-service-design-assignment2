@@ -1,0 +1,113 @@
+# 증거 재현 스크립트 실행 결과
+# 실행 시각: 2026-11-25T06:21:00.279Z / node v24.15.0
+# 사용자 ID: alice=1, bob=2, manager1=3, manager2=4, charlie=5 · 행사 1 정원 2명(manager1), 행사 2 정원 1명(manager2)
+
+================ A. 정원 초과 직접 승인 거부 (행사 1, 정원 2명) ================
+
+[요청 전 · 행사 1 승인 인원 2/2]
+  applications
+    id | event_id | user_id | status  
+    1  | 1        | 1       | APPROVED
+    2  | 1        | 2       | APPROVED
+    3  | 1        | 5       | PENDING 
+  application_history
+    id | app | actor | action  | from    | to       | reason | cause
+    1  | 1   | 1     | APPLY   | null    | PENDING  | null   | null 
+    2  | 2   | 2     | APPLY   | null    | PENDING  | null   | null 
+    3  | 3   | 5     | APPLY   | null    | PENDING  | null   | null 
+    4  | 1   | 3     | APPROVE | PENDING | APPROVED | null   | null 
+    5  | 2   | 3     | APPROVE | PENDING | APPROVED | null   | null 
+
+>>> POST /api/applications/3/approve  (actor: manager1 #3, 대상: charlie의 PENDING 신청 #3)
+<<< HTTP 409 {"code":"CAPACITY_FULL","message":"승인 정원이 모두 찼습니다."}
+
+[요청 후 · 행사 1 승인 인원 2/2]
+  applications
+    id | event_id | user_id | status  
+    1  | 1        | 1       | APPROVED
+    2  | 1        | 2       | APPROVED
+    3  | 1        | 5       | PENDING 
+  application_history
+    id | app | actor | action  | from    | to       | reason | cause
+    1  | 1   | 1     | APPLY   | null    | PENDING  | null   | null 
+    2  | 2   | 2     | APPLY   | null    | PENDING  | null   | null 
+    3  | 3   | 5     | APPLY   | null    | PENDING  | null   | null 
+    4  | 1   | 3     | APPROVE | PENDING | APPROVED | null   | null 
+    5  | 2   | 3     | APPROVE | PENDING | APPROVED | null   | null 
+
+=> 요청 전후 applications·application_history 완전히 동일: true
+
+================ B. 자동 승급 이력 저장 실패 주입 → 전체 롤백 (행사 2, 정원 1명) ================
+
+트리거 설치: AUTO_APPROVE 이력 INSERT 시 RAISE(ABORT,'TEST_INJECTED_FAILURE')  (테스트 T29와 동일)
+
+[요청 전 · 행사 2 승인 인원 1/1]
+  applications
+    id | event_id | user_id | status  
+    1  | 1        | 1       | APPROVED
+    2  | 1        | 2       | APPROVED
+    3  | 1        | 5       | PENDING 
+    4  | 2        | 1       | APPROVED
+    5  | 2        | 2       | PENDING 
+  application_history
+    id | app | actor | action  | from    | to       | reason | cause
+    1  | 1   | 1     | APPLY   | null    | PENDING  | null   | null 
+    2  | 2   | 2     | APPLY   | null    | PENDING  | null   | null 
+    3  | 3   | 5     | APPLY   | null    | PENDING  | null   | null 
+    4  | 1   | 3     | APPROVE | PENDING | APPROVED | null   | null 
+    5  | 2   | 3     | APPROVE | PENDING | APPROVED | null   | null 
+    6  | 4   | 1     | APPLY   | null    | PENDING  | null   | null 
+    7  | 4   | 4     | APPROVE | PENDING | APPROVED | null   | null 
+    8  | 5   | 2     | APPLY   | null    | PENDING  | null   | null 
+TEST_INJECTED_FAILURE
+
+>>> POST /api/applications/4/revoke {"reason":"운영 사정으로 승인 취소"}  (actor: manager2 #4)
+<<< HTTP 500 {"code":"INTERNAL_ERROR","message":"서버에서 처리하지 못했습니다."}
+
+[요청 후 · 행사 2 승인 인원 1/1]
+  applications
+    id | event_id | user_id | status  
+    1  | 1        | 1       | APPROVED
+    2  | 1        | 2       | APPROVED
+    3  | 1        | 5       | PENDING 
+    4  | 2        | 1       | APPROVED
+    5  | 2        | 2       | PENDING 
+  application_history
+    id | app | actor | action  | from    | to       | reason | cause
+    1  | 1   | 1     | APPLY   | null    | PENDING  | null   | null 
+    2  | 2   | 2     | APPLY   | null    | PENDING  | null   | null 
+    3  | 3   | 5     | APPLY   | null    | PENDING  | null   | null 
+    4  | 1   | 3     | APPROVE | PENDING | APPROVED | null   | null 
+    5  | 2   | 3     | APPROVE | PENDING | APPROVED | null   | null 
+    6  | 4   | 1     | APPLY   | null    | PENDING  | null   | null 
+    7  | 4   | 4     | APPROVE | PENDING | APPROVED | null   | null 
+    8  | 5   | 2     | APPLY   | null    | PENDING  | null   | null 
+
+=> 요청 전후 applications·application_history 완전히 동일: true
+   (REVOKED 변경·REVOKE 이력·APPROVED 변경이 이미 실행된 뒤 마지막 INSERT가 실패했지만 모두 되돌려짐)
+
+트리거 제거 후 같은 요청 재시도
+
+>>> POST /api/applications/4/revoke (재시도)
+<<< HTTP 200 {"revoked":{"id":4,"status":"REVOKED"},"promoted":{"id":5,"status":"APPROVED"}}
+
+[재시도 후 · 행사 2 승인 인원 1/1]
+  applications
+    id | event_id | user_id | status  
+    1  | 1        | 1       | APPROVED
+    2  | 1        | 2       | APPROVED
+    3  | 1        | 5       | PENDING 
+    4  | 2        | 1       | REVOKED 
+    5  | 2        | 2       | APPROVED
+  application_history
+    id | app | actor | action       | from     | to       | reason        | cause
+    1  | 1   | 1     | APPLY        | null     | PENDING  | null          | null 
+    2  | 2   | 2     | APPLY        | null     | PENDING  | null          | null 
+    3  | 3   | 5     | APPLY        | null     | PENDING  | null          | null 
+    4  | 1   | 3     | APPROVE      | PENDING  | APPROVED | null          | null 
+    5  | 2   | 3     | APPROVE      | PENDING  | APPROVED | null          | null 
+    6  | 4   | 1     | APPLY        | null     | PENDING  | null          | null 
+    7  | 4   | 4     | APPROVE      | PENDING  | APPROVED | null          | null 
+    8  | 5   | 2     | APPLY        | null     | PENDING  | null          | null 
+    9  | 4   | 4     | REVOKE       | APPROVED | REVOKED  | 운영 사정으로 승인 취소 | null 
+    10 | 5   | 4     | AUTO_APPROVE | PENDING  | APPROVED | null          | 9    
