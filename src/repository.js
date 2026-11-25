@@ -17,6 +17,9 @@ export function createRepository(db) {
     approvedCount(eventId) { return db.prepare("SELECT COUNT(*) AS n FROM applications WHERE event_id=? AND status='APPROVED'").get(eventId).n; },
     insert(eventId,userId) { const r=db.prepare("INSERT INTO applications(event_id,user_id,status) VALUES (?,?,'PENDING')").run(eventId,userId); return this.application(Number(r.lastInsertRowid)); },
     // 대기 순서와 이력 저장 시점, 트랜잭션 경계는 서비스에서 결정합니다.
+    // [학생 추가] 자동 승급 대상: 같은 행사의 PENDING 중 created_at ASC, id ASC 첫 1건.
+    // CANCELLED·REVOKED·APPROVED와 다른 행사는 WHERE 조건으로 제외됩니다. 없으면 undefined.
+    nextPending(eventId) { return db.prepare(selection+" WHERE a.event_id=? AND a.status='PENDING' ORDER BY a.created_at ASC, a.id ASC LIMIT 1").get(eventId); },
     history(id) { return db.prepare(`SELECT id,application_id AS applicationId,actor_id AS actorId,
       action,from_status AS fromStatus,to_status AS toStatus,reason,cause_history_id AS causeHistoryId,
       created_at AS createdAt FROM application_history WHERE application_id=? ORDER BY id`).all(id); },
