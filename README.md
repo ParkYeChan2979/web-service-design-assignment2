@@ -150,7 +150,8 @@ npm run db:reset
 ### 새 폴더에서 재현하는 방법
 
 ```sh
-git clone <이 저장소 URL> assignment2 && cd assignment2
+git clone https://github.com/ParkYeChan2979/web-service-design-assignment2.git assignment2
+cd assignment2
 node --version            # v24.x 확인
 npm ci
 npm test                  # 기반 4/4
